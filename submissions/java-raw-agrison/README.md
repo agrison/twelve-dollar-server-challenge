@@ -157,6 +157,20 @@ Allocation is dominated by *connection setup*, not by serving: the single young 
 during ramp-up, while steady-state traffic allocates 43 bytes per request. In the scored window,
 where connections are already established, a young collection is expected once per several minutes.
 
+**61,000 idle keep-alive connections, measured directly.** Opening 61k connections (one request
+each, then held open) against the same 1 vCPU / 2 GB container:
+
+| At 61,000 connections | |
+|---|---|
+| Container memory | **811 MB of 2 GB** — ~4.6 KB per connection, all in |
+| Live heap after a full GC | **110 MB** of the 256 MB old gen (43% occupancy) |
+| Young GC pause | **54 ms** (39 ms at 20k, so it scales well sublinearly) |
+| Full GC pause | **112 ms** first, 91 ms steady — and none is expected during a hold, since the old gen stops growing once connections are established |
+
+That settles the two things: memory has ~1.2 GB of headroom, and a
+young collection costs tens of milliseconds against a 500 ms p95 budget. Eden fills in roughly seven
+minutes at steady-state allocation rates, so a 5-minute hold should see zero or one young GC.
+
 ### Microbenchmarks (Apple M4 Pro, macOS, one carrier thread)
 
 | Measurement | Result |
