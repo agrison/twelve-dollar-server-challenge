@@ -91,9 +91,10 @@ JSON from the same statement that writes it.
 | Flag | Why |
 |---|---|
 | `-XX:+UseSerialGC` | On 1 vCPU, G1/ZGC pay for concurrent threads and write barriers with nothing to gain |
-| `-Xms512m -Xmx512m -Xmn256m`, `AlwaysPreTouch` | No heap resizing mid-benchmark, pages already faulted in; a large young gen with a tiny live set means young collections are rare |
+| `-Xms384m -Xmx384m -Xmn128m`, `AlwaysPreTouch` | No heap resizing mid-benchmark, pages already faulted in. Sized from measurement, not guesswork: the live set is **47 MB at 20,000 connections** (one parked virtual thread's stack chunk per connection dominates it), so the 256 MB old gen still sits at ~56% occupancy extrapolated to 60k connections, while the 128 MB young gen takes one collection per ~3M requests |
 | `+UseTransparentHugePages` | Fewer TLB misses on the heap (Ubuntu's THP is `madvise`, so the JVM flag is enough — no kernel tuning) |
 | `+UseCompactObjectHeaders` | 8-byte headers: less memory and fewer cache misses |
+| `MaxDirectMemorySize=256m` | The only per-connection direct allocation is a 1 KB read buffer, so this covers ~190k connections with the `Out` pool on top |
 | `virtualThreadScheduler.parallelism=1` | One carrier thread for one vCPU: no contention, no cross-core cache traffic |
 | `jdk.trackAllThreads=false`, `-XX:-UsePerfData` | Skips per-virtual-thread registration and the mmapped hsperfdata file |
 | `--enable-native-access=ALL-UNNAMED` | FFM without warnings |
@@ -117,7 +118,7 @@ arm64, so x86_64 ran emulated: the timings are proof the steps work, not perform
 | `start.sh` | all ten Linux-only JVM flags accepted, no warning on stderr |
 | `test/test.sh` | **42/42** |
 
-### On a 1 vCPU / 2 GB Ubuntu 24.04 container
+### On a 1 vCPU / 2 GB Ubuntu 24.04 container, built by these scripts
 
 Docker, `--cpus=1 --memory=2g --memory-swap=2g`, native arm64 (no emulation), the pinned JDK 27 and
 the self-compiled `libsqlite3.so`, with k6 in a sibling container so the generator never competes
@@ -125,25 +126,36 @@ for the server's single core. **This is a proxy, not the droplet**: one core of 
 substantially faster than a shared DigitalOcean vCPU, and container-to-container networking is
 cheaper than 15k real clients over the internet. Read it for headroom and scaling shape, not as a score.
 
-| k6 `VUS` | req/s | p95 | p99 | errors | server RSS |
+| k6 `VUS` | req/s | p95 | p99 | errors | container memory |
 |---|---|---|---|---|---|
 | 1,000 | 80 | 1.51 ms | 2.21 ms | 0.00% | — |
 | 5,000 | 386 | 1.11 ms | 1.73 ms | 0.00% | 618 MB |
 | 10,000 | 769 | 1.14 ms | 1.86 ms | 0.00% | 649 MB |
-| 20,000 | 1,495 | 1.03 ms | 1.77 ms | 0.00% | 702 MB |
-| **20,000, full 5-minute hold** | **1,868** | **1.09 ms** | **2.39 ms** | **0.00%** | **785 MB** |
+| 20,000 | 1,706 | 1.22 ms | 2.09 ms | 0.00% | 667 MB |
+| **20,000, full 5-minute hold** | **1,868** | **1.18 ms** | **2.02 ms** | **0.00%** | **637 MB** |
 
-The 5-minute hold at 20,000 VUs passed all three thresholds on 747,379 requests with 100% of checks
-succeeding, zero failures and not one line in the server log. p99 of 2.39 ms against the 1 s budget
-is a 418x margin, and latency does not degrade between 1,000 and 20,000 VUs.
+The 5-minute hold at 20,000 VUs passed all three thresholds on 747,120 requests with 100% of checks
+succeeding, zero failures and not one line in the server log. p99 of 2.02 ms against the 1 s budget
+is a 495x margin, and latency does not degrade between 1,000 and 20,000 VUs. `start.sh` with this
+exact flag set was validated separately (42/42 on a fresh database); the hold itself ran on a
+directly-launched JVM with identical flags plus GC logging.
 
 `start.sh` to the first 200 on `/health`: **281 ms** on one vCPU, which includes `AlwaysPreTouch`
-faulting in the whole 512 MB heap and opening five SQLite connections. Rule 10 allows 60 s.
+faulting in the whole heap and opening five SQLite connections. Rule 10 allows 60 s.
 
-The headroom number: during a 20,000 VU run the server used **mean 23.7% (peak 31%) of its single
-vCPU** at 864 MB of the 2 GB. So on this core it is CPU-idle at 20k users, and memory grows by
-roughly 14 KB per connection including kernel socket memory — about 1.1–1.3 GB extrapolated to
-30–40k connections.
+The headroom number: during a 20,000 VU run the server used **mean 24%, peak 31% of its single
+vCPU** at 637-667 MB of the 2 GB.
+
+**Memory, measured rather than estimated.** A forced full GC under load puts the live heap at
+**47 MB at 20,000 connections**, and the one young collection that occurred in 146 s of load agrees
+with it exactly (`102M->47M(371M), 39.4 ms` — that pause is also what k6 reports as its `max`).
+So a connection costs ~2.3 KB of live heap plus a 1 KB direct read buffer, and the container grows
+by ~12.6 KB per connection once kernel socket memory is counted. Extrapolated to 60,000
+connections that is roughly **1.2 GB of the 2 GB**, with the old gen at ~56% occupancy.
+
+Allocation is dominated by *connection setup*, not by serving: the single young GC above happened
+during ramp-up, while steady-state traffic allocates 43 bytes per request. In the scored window,
+where connections are already established, a young collection is expected once per several minutes.
 
 ### Microbenchmarks (Apple M4 Pro, macOS, one carrier thread)
 

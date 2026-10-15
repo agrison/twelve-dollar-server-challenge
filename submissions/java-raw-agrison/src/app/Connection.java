@@ -7,14 +7,14 @@ import java.nio.channels.SocketChannel;
 
 /**
  * One virtual thread per connection, blocking I/O. Idle keep-alive connections cost a parked
- * virtual thread plus this 2 KB read buffer, which is what makes ~15k direct connections
+ * virtual thread plus this 1 KB read buffer, which is what makes ~15k direct connections
  * affordable; the 80 KB render buffer is borrowed only while a request is being served.
  *
  * There is no idle timeout: the spec wants connections held for at least 65 s, and Nginx (if it is
  * in front) must never find a socket we closed under it.
  */
 final class Connection implements Runnable {
-    private static final int READ_BUF = 2048;
+    private static final int READ_BUF = 1024;
     private static final int MAX_BUF = 32768;      // bodies past 16 KB are out of scope
 
     private final SocketChannel ch;

@@ -12,11 +12,11 @@ if [ "$(uname -s)" = Linux ]; then
   # Tuning for the benchmark box: 1 vCPU, 2 GB, no swap (README.md explains every flag).
   FLAGS=(
     -XX:+UseSerialGC
-    -Xms512m -Xmx512m -Xmn256m
+    -Xms384m -Xmx384m -Xmn128m
     -XX:+AlwaysPreTouch
     -XX:+UseTransparentHugePages
     -XX:+UseCompactObjectHeaders
-    -XX:MaxDirectMemorySize=160m
+    -XX:MaxDirectMemorySize=256m
     -XX:ReservedCodeCacheSize=64m
     -XX:MaxMetaspaceSize=64m
     -Xss256k
@@ -25,7 +25,7 @@ if [ "$(uname -s)" = Linux ]; then
 else
   # Local development on another OS: only the flags that exist everywhere.
   LIB="$DIR/native/libsqlite3.dylib"
-  FLAGS=(-XX:+UseSerialGC -Xms512m -Xmx512m -Xmn256m -Xss256k -XX:-UsePerfData)
+  FLAGS=(-XX:+UseSerialGC -Xms384m -Xmx384m -Xmn128m -Xss256k -XX:-UsePerfData)
 fi
 
 exec "$JDK_HOME/bin/java" \
